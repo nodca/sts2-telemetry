@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <STS2GameDir Condition="'$(STS2GameDir)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">D:\SteamLibrary\steamapps\common\Slay the Spire 2</STS2GameDir>
+    <STS2GameDir Condition="'$(STS2GameDir)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">$(HOME)/Library/Application Support/Steam/steamapps/common/Slay the Spire 2</STS2GameDir>
+    <STS2GameDir Condition="'$(STS2GameDir)' == '' and $([MSBuild]::IsOSPlatform('Linux')) and Exists('$(HOME)/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Slay the Spire 2')">$(HOME)/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Slay the Spire 2</STS2GameDir>
+    <STS2GameDir Condition="'$(STS2GameDir)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">$(HOME)/.steam/steam/steamapps/common/Slay the Spire 2</STS2GameDir>
+    <STS2MacResourcesDir Condition="'$(STS2MacResourcesDir)' == ''">$(STS2GameDir)/SlayTheSpire2.app/Contents/Resources</STS2MacResourcesDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">$(STS2GameDir)/data_sts2_windows_x86_64</STS2GameDataDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == '' and $([MSBuild]::IsOSPlatform('OSX')) and Exists('$(STS2MacResourcesDir)/data_sts2_macos_arm64')">$(STS2MacResourcesDir)/data_sts2_macos_arm64</STS2GameDataDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == '' and $([MSBuild]::IsOSPlatform('OSX')) and Exists('$(STS2MacResourcesDir)/data_sts2_macos_x86_64')">$(STS2MacResourcesDir)/data_sts2_macos_x86_64</STS2GameDataDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">$(STS2MacResourcesDir)/data_sts2_macos_arm64</STS2GameDataDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">$(STS2GameDir)/data_sts2_linuxbsd_x86_64</STS2GameDataDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="sts2">
+      <HintPath>$(STS2GameDataDir)/sts2.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Sts2Telemetry/Sts2Telemetry.csproj" />
+  </ItemGroup>
+</Project>

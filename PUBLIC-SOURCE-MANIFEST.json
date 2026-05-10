@@ -1,0 +1,24 @@
+{
+  "schema_version": "sts2.telemetry.public_source_export.v1",
+  "purpose": "privacy-reviewable mod source export",
+  "included": [
+    ".gitignore",
+    "sts2-telemetry",
+    "README.md",
+    "README.zh-CN.md",
+    "src",
+    "tests",
+    "scripts/package-mod-release.sh",
+    "scripts/upload-github-mod-release.sh",
+    "scripts/validate-mod-release-assets.sh"
+  ],
+  "excluded_private_surfaces": [
+    "server/",
+    "web/",
+    "server/deploy/",
+    "server/migrations/",
+    "server/internal/",
+    ".trellis/",
+    ".agents/"
+  ]
+}

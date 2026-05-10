@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec dotnet run --project "$SCRIPT_DIR/src/Sts2Telemetry.Cli/Sts2Telemetry.Cli.csproj" -- "$@"

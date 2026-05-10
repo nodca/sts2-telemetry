@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Sts2Telemetry.Updater</AssemblyName>
+    <RootNamespace>Sts2Telemetry</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Sts2Telemetry/TelemetryJson.cs" Link="TelemetryJson.cs" />
+    <Compile Include="../Sts2Telemetry/TelemetryUpdateHash.cs" Link="TelemetryUpdateHash.cs" />
+    <Compile Include="../Sts2Telemetry/TelemetryUpdateInstaller.cs" Link="TelemetryUpdateInstaller.cs" />
+    <Compile Include="../Sts2Telemetry/TelemetryUpdateModels.cs" Link="TelemetryUpdateModels.cs" />
+    <Compile Include="../Sts2Telemetry/TelemetryUpdateSettings.cs" Link="TelemetryUpdateSettings.cs" />
+    <Compile Include="../Sts2Telemetry/TelemetryUpdateStore.cs" Link="TelemetryUpdateStore.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,22 @@
+.ace-tool/
+artifacts/
+picture/
+bin/
+obj/
+server/var/
+server/deploy/*.env
+!server/deploy/*.env.example
+web/node_modules/
+web/dist/
+web/.vite/
+web/*.tsbuildinfo
+
+# Local workflow/editor agent config and generated planning/docs
+AGENTS.md
+.codex/
+.opencode/
+.gemini/
+.trellis/
+.agents/
+.claude/
+docs/
