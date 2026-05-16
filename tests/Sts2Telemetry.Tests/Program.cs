@@ -143,6 +143,7 @@ var tests = new (string Name, Action Body)[]
     ("local game assembly exposes required hook targets", LocalGameAssemblyExposesRequiredHookTargets),
     ("telemetry directory resolver keeps runtime data outside mod directory", TelemetryDirectoryResolverKeepsRuntimeDataOutsideModDirectory),
     ("jsonl writer persists one line per record", JsonlWriterPersistsRecords),
+    ("jsonl writer drain flushes queued records", JsonlWriterDrainFlushesQueuedRecords),
     ("jsonl writer routes logical run records to segment files", JsonlWriterRoutesLogicalRunRecordsToSegmentFiles),
     ("recorder envelope includes capture session and segment identity", RecorderEnvelopeIncludesCaptureSessionAndSegmentIdentity),
     ("jsonl writer persists non-finite numeric values", JsonlWriterPersistsNonFiniteNumbers),
@@ -7657,6 +7658,38 @@ static void JsonlWriterPersistsRecords()
         using JsonDocument document = JsonDocument.Parse(lines[0]);
         AssertEqual("test/record", document.RootElement.GetProperty("record_type").GetString(), "record_type");
         AssertEqual(7, document.RootElement.GetProperty("value").GetInt32(), "value");
+    }
+    finally
+    {
+        if (Directory.Exists(directory))
+            Directory.Delete(directory, recursive: true);
+    }
+}
+
+static void JsonlWriterDrainFlushesQueuedRecords()
+{
+    string directory = Path.Combine(Path.GetTempPath(), $"sts2-telemetry-test-{Guid.NewGuid():N}");
+    try
+    {
+        using (var writer = new JsonlTelemetryWriter(directory))
+        {
+            writer.Enqueue("run-drain", new Dictionary<string, object?>
+            {
+                ["schema_version"] = TelemetryRecorder.SchemaVersion,
+                ["record_type"] = "test/drain",
+                ["local_sequence"] = 1
+            });
+
+            AssertTrue(writer.Drain(TimeSpan.FromSeconds(2)), "writer drain should complete");
+
+            string path = Path.Combine(directory, "runs", "run-drain", "telemetry.jsonl");
+            AssertTrue(File.Exists(path), "drained telemetry.jsonl should exist before writer dispose");
+            string[] lines = File.ReadAllLines(path);
+            AssertEqual(1, lines.Length, "drained record line count before writer dispose");
+
+            using JsonDocument document = JsonDocument.Parse(lines[0]);
+            AssertEqual("test/drain", document.RootElement.GetProperty("record_type").GetString(), "drained record_type");
+        }
     }
     finally
     {

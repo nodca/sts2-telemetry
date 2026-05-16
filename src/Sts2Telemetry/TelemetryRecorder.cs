@@ -302,6 +302,7 @@ public sealed class TelemetryRecorder
             ["branch"] = _branchTracker.BuildMetadata(),
             ["capture_policy"] = SignalOnlyCapturePolicy
         });
+        DrainWriterAfterTerminalRecord("lifecycle/run_ended", source);
 
         lock (_gate)
             TransitionToNoRunAfterBoundaryUnderLock(preserveBranchTrackerForNextLoad: false);
@@ -543,6 +544,28 @@ public sealed class TelemetryRecorder
         };
 
         Enqueue(record);
+    }
+
+    public bool DrainWriterAfterTerminalRecord(string recordType, string source)
+    {
+        bool drained = _writer.Drain(TimeSpan.FromSeconds(2));
+        if (!drained)
+        {
+            WriteLifecycle("lifecycle/jsonl_writer_drain_failed", new Dictionary<string, object?>
+            {
+                ["source"] = source,
+                ["terminal_record_type"] = recordType,
+                ["details"] = new Dictionary<string, object?>
+                {
+                    ["reason"] = "terminal_record_drain_timeout",
+                    ["timeout_ms"] = 2000
+                },
+                ["branch"] = _branchTracker.BuildMetadata(),
+                ["capture_policy"] = SignalOnlyCapturePolicy
+            });
+        }
+
+        return drained;
     }
 
     private void EnsureDecisionContextForActionSignal(IReadOnlyDictionary<string, object?> signal)
