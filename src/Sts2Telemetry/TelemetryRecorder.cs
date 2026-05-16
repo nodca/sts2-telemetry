@@ -397,6 +397,12 @@ public sealed class TelemetryRecorder
         }
     }
 
+    internal void ClearDecisionContextForSurface(string stateType)
+    {
+        lock (_gate)
+            _latestDecisionContextByStateType.Remove(stateType);
+    }
+
     internal bool EnsureCardRewardDecisionContextForSelectionSignal(string source)
     {
         if (!IsCapturing)
@@ -494,7 +500,7 @@ public sealed class TelemetryRecorder
             pendingMarkerIfMissing: false);
     }
 
-    public void RecordActionExecutorSignal(object action, string phase)
+    public void RecordActionExecutorSignal(object action, string phase, string? capturePolicy = null)
     {
         if (!IsCapturing)
             return;
@@ -512,7 +518,7 @@ public sealed class TelemetryRecorder
         record["signal_source"] = "action_executor";
         record["signal_phase"] = phase;
         record["signal_role"] = "observed_action_executor_signal";
-        record["capture_policy"] = SignalOnlyCapturePolicy;
+        record["capture_policy"] = capturePolicy ?? SignalOnlyCapturePolicy;
         record["branch"] = _branchTracker.BuildMetadata();
         record["action_signal"] = new Dictionary<string, object?>
         {

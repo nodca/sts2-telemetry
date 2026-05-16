@@ -3,7 +3,7 @@
   "name": "STS2 Telemetry",
   "author": "wcn",
   "description": "JSONL hook recorder with opt-out background telemetry upload for Slay the Spire 2 player telemetry.",
-  "version": "0.1.4",
+  "version": "0.1.17",
   "has_pck": false,
   "has_dll": true,
   "affects_gameplay": false

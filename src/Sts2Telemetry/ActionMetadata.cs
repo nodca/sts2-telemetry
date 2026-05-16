@@ -101,6 +101,7 @@ internal static class ActionMetadata
         };
 
         AddMapActionSignalMetadata(metadata, action);
+        AddTreasureRelicSignalMetadata(metadata, action);
         return metadata;
     }
 
@@ -792,6 +793,32 @@ internal static class ActionMetadata
         }
 
         metadata["extraction_status"] = status;
+    }
+
+    private static void AddTreasureRelicSignalMetadata(IDictionary<string, object?> metadata, object action)
+    {
+        if (!action.GetType().Name.EndsWith("PickRelicAction", StringComparison.Ordinal))
+            return;
+
+        bool hasRelicIndex = ReflectionUtil.TryReadMemberValue(action, out object? relicIndexValue, "_relicIndex", "RelicIndex");
+        int? relicIndex = ToInt(relicIndexValue);
+        string actionType = relicIndex == null ? "skip_treasure_relic" : "choose_treasure_relic";
+
+        metadata["action_type"] = actionType;
+        metadata["state_type"] = "treasure";
+        metadata["selection_kind"] = actionType;
+        metadata["relic_index"] = hasRelicIndex ? relicIndex : null;
+        metadata["projection_policy"] = "type_and_scalar_treasure_relic_pick_signal";
+        metadata["treasure_transition_safety"] = "current_relics_not_read_from_action_executor_signal";
+        metadata["extraction_status"] = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["relic_index"] = !hasRelicIndex
+                ? "unavailable"
+                : relicIndex == null
+                    ? "extracted_null_skip"
+                    : "extracted",
+            ["relic"] = "suppressed_treasure_transition_safety"
+        };
     }
 
     private static IEnumerable<IReadOnlyDictionary<string, object?>> FindPreStateCards(

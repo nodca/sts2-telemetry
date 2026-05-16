@@ -5689,7 +5689,8 @@ static void ActionExecutorCapturePolicyMarksApprovedVolatileActionsSignalOnly()
         "MegaCrit.Sts2.Core.GameActions.VoteForMapCoordAction",
         "MegaCrit.Sts2.Core.GameActions.VoteToMoveToNextActAction",
         "MegaCrit.Sts2.Core.GameActions.ReadyToBeginEnemyTurnAction",
-        "MegaCrit.Sts2.Core.GameActions.UndoEndPlayerTurnAction"
+        "MegaCrit.Sts2.Core.GameActions.UndoEndPlayerTurnAction",
+        "MegaCrit.Sts2.Core.GameActions.PickRelicAction"
     };
 
     Assembly gameAssembly = typeof(RunManager).Assembly;
@@ -5713,7 +5714,6 @@ static void ActionExecutorCapturePolicyMarksApprovedVolatileActionsSignalOnly()
         "MegaCrit.Sts2.Core.GameActions.PlayCardAction",
         "MegaCrit.Sts2.Core.GameActions.UsePotionAction",
         "MegaCrit.Sts2.Core.GameActions.DiscardPotionGameAction",
-        "MegaCrit.Sts2.Core.GameActions.PickRelicAction",
         "MegaCrit.Sts2.Core.GameActions.NotListedAction"
     };
 
@@ -5733,6 +5733,10 @@ static void ActionExecutorCapturePolicyMarksApprovedVolatileActionsSignalOnly()
 
     AssertTrue(!ActionExecutorCapturePolicy.IsSignalOnly(new NotListedAction()),
         "a non-listed runtime action object should remain full-frame");
+    AssertTrue(ActionExecutorCapturePolicy.IsTreasureRelicPickTransitionTypeName("PickRelicAction"),
+        "PickRelicAction should use treasure relic transition safety");
+    AssertTrue(!ActionExecutorCapturePolicy.IsTreasureRelicPickTransitionTypeName("NotListedAction"),
+        "non-relic actions should not use treasure relic transition safety");
 }
 
 static void ActionExecutorCallbacksRouteSignalOnlyActionsWithoutPendingMissingMarkers()
@@ -10280,7 +10284,8 @@ static LegalActionBuilder TestLegalActionBuilder(IReadOnlyDictionary<string, obj
             PlayerActionsDisabled: false),
         memberNames => memberNames.Length > 0 && runManagerMembers.TryGetValue(memberNames[0], out object? value)
             ? value
-            : null);
+            : null,
+        () => TreasureRelicReadinessProbe.ReadyForTests);
 
 static TestCreature TestEnemy(int combatId, string id, string name, int hp)
     => new()

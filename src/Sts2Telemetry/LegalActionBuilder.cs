@@ -1,3 +1,4 @@
+using System.Collections;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Runs;
 
@@ -7,6 +8,7 @@ public sealed class LegalActionBuilder
 {
     private readonly Func<CombatAvailability> _combatAvailabilityFactory;
     private readonly Func<string[], object?> _runManagerMemberFactory;
+    private readonly Func<TreasureRelicReadiness> _treasureRelicReadinessFactory;
     private readonly RewardChoiceCache _rewardChoiceCache;
     private readonly SelectionChoiceCache _selectionChoiceCache;
 
@@ -23,19 +25,32 @@ public sealed class LegalActionBuilder
     };
 
     public LegalActionBuilder()
-        : this(GetRuntimeCombatAvailability, ResolveRuntimeRunManagerMember)
+        : this(GetRuntimeCombatAvailability, ResolveRuntimeRunManagerMember, TreasureRelicReadinessProbe.GetRuntimeReadiness)
     {
     }
 
     internal LegalActionBuilder(Func<CombatAvailability> combatAvailabilityFactory)
-        : this(combatAvailabilityFactory, ResolveRuntimeRunManagerMember)
+        : this(combatAvailabilityFactory, ResolveRuntimeRunManagerMember, TreasureRelicReadinessProbe.GetRuntimeReadiness)
     {
     }
 
     internal LegalActionBuilder(
         Func<CombatAvailability> combatAvailabilityFactory,
         Func<string[], object?> runManagerMemberFactory)
-        : this(combatAvailabilityFactory, runManagerMemberFactory, RewardChoiceCache.Shared, SelectionChoiceCache.Shared)
+        : this(combatAvailabilityFactory, runManagerMemberFactory, TreasureRelicReadinessProbe.GetRuntimeReadiness)
+    {
+    }
+
+    internal LegalActionBuilder(
+        Func<CombatAvailability> combatAvailabilityFactory,
+        Func<string[], object?> runManagerMemberFactory,
+        Func<TreasureRelicReadiness> treasureRelicReadinessFactory)
+        : this(
+            combatAvailabilityFactory,
+            runManagerMemberFactory,
+            treasureRelicReadinessFactory,
+            RewardChoiceCache.Shared,
+            SelectionChoiceCache.Shared)
     {
     }
 
@@ -43,18 +58,25 @@ public sealed class LegalActionBuilder
         Func<CombatAvailability> combatAvailabilityFactory,
         Func<string[], object?> runManagerMemberFactory,
         RewardChoiceCache rewardChoiceCache)
-        : this(combatAvailabilityFactory, runManagerMemberFactory, rewardChoiceCache, SelectionChoiceCache.Shared)
+        : this(
+            combatAvailabilityFactory,
+            runManagerMemberFactory,
+            TreasureRelicReadinessProbe.GetRuntimeReadiness,
+            rewardChoiceCache,
+            SelectionChoiceCache.Shared)
     {
     }
 
     internal LegalActionBuilder(
         Func<CombatAvailability> combatAvailabilityFactory,
         Func<string[], object?> runManagerMemberFactory,
+        Func<TreasureRelicReadiness> treasureRelicReadinessFactory,
         RewardChoiceCache rewardChoiceCache,
         SelectionChoiceCache selectionChoiceCache)
     {
         _combatAvailabilityFactory = combatAvailabilityFactory;
         _runManagerMemberFactory = runManagerMemberFactory;
+        _treasureRelicReadinessFactory = treasureRelicReadinessFactory;
         _rewardChoiceCache = rewardChoiceCache;
         _selectionChoiceCache = selectionChoiceCache;
     }
@@ -65,7 +87,7 @@ public sealed class LegalActionBuilder
 
         if (snapshot.StateType == "combat")
         {
-            AddCombatActions(actions, localPlayer);
+            AddCombatActions(actions, snapshot, localPlayer);
         }
         else if (snapshot.StateType == "shop")
         {
@@ -73,7 +95,7 @@ public sealed class LegalActionBuilder
         }
         else if (snapshot.StateType == "map")
         {
-            AddMapActions(actions, runState);
+            AddMapActions(actions, runState, localPlayer);
         }
         else if (snapshot.StateType == "event")
         {
@@ -155,7 +177,7 @@ public sealed class LegalActionBuilder
         return offers;
     }
 
-    private void AddMapActions(ICollection<Dictionary<string, object?>> actions, object? runState)
+    private void AddMapActions(ICollection<Dictionary<string, object?>> actions, object? runState, object? localPlayer)
     {
         object? map = ReflectionUtil.GetMemberValue(runState, "Map");
         if (map == null)
@@ -197,6 +219,25 @@ public sealed class LegalActionBuilder
             return;
         }
 
+        bool hasWingedBoots = HasWingedBoots(localPlayer);
+        if (hasWingedBoots)
+        {
+            int? sourceRow = MapPointCoordValue(currentPoint, "row") ?? MapCoordValue(sourceCoord, "row");
+            foreach (object? mapPoint in EnumerateAllMapPoints(map))
+            {
+                if (mapPoint == null
+                    || candidates.Any(candidate => ReferenceEquals(candidate, mapPoint))
+                    || ReferenceEquals(mapPoint, currentPoint))
+                {
+                    continue;
+                }
+
+                int? row = MapPointCoordValue(mapPoint, "row");
+                if (sourceRow == null || row == null || row > sourceRow)
+                    candidates.Add(mapPoint);
+            }
+        }
+
         var candidateSummaries = candidates
             .Select(ProjectMapPoint)
             .Where(candidate => candidate != null)
@@ -221,6 +262,17 @@ public sealed class LegalActionBuilder
                 ["can_select"] = true,
                 ["availability"] = "available"
             };
+
+            if (hasWingedBoots
+                && currentPoint != null
+                && !ReferenceEquals(candidate, currentPoint)
+                && !ReflectionUtil.Enumerate(ReflectionUtil.GetMemberValue(currentPoint, "Children"))
+                    .Any(child => ReferenceEquals(child, candidate)))
+            {
+                action["route_override_reason"] = "winged_boots";
+                action["requires_relic"] = "WINGED_BOOTS";
+                action["source"] = "run_state_map_winged_boots";
+            }
 
             if (action["coord"] is IReadOnlyDictionary<string, object?> coord)
             {
@@ -327,6 +379,13 @@ public sealed class LegalActionBuilder
 
     private void AddTreasureRelicActions(ICollection<Dictionary<string, object?>> actions)
     {
+        TreasureRelicReadiness readiness = _treasureRelicReadinessFactory();
+        if (!readiness.CanReadRelics)
+        {
+            AddTreasureRelicUnavailableAction(actions, readiness);
+            return;
+        }
+
         object? synchronizer = ResolveRunManagerMember("TreasureRoomRelicSynchronizer");
         object? relics = ReflectionUtil.GetMemberValue(synchronizer, "CurrentRelics");
         int initialCount = actions.Count;
@@ -357,7 +416,7 @@ public sealed class LegalActionBuilder
         if (actions.Count == initialCount)
         {
             AddUnavailableAction(actions, "treasure_relic_typed_builder_unavailable", "treasure_room_relic_synchronizer", "treasure",
-                "current_relics_not_found", "treasure relic legal actions require TreasureRoomRelicSynchronizer.CurrentRelics");
+                "current_relics_not_found", "treasure relic legal actions require a visible relic collection and TreasureRoomRelicSynchronizer.CurrentRelics");
             return;
         }
 
@@ -369,6 +428,22 @@ public sealed class LegalActionBuilder
             ["relic_index"] = null,
             ["can_select"] = true,
             ["availability"] = "available"
+        });
+    }
+
+    private static void AddTreasureRelicUnavailableAction(
+        ICollection<Dictionary<string, object?>> actions,
+        TreasureRelicReadiness readiness)
+    {
+        actions.Add(new Dictionary<string, object?>
+        {
+            ["action_type"] = "treasure_relic_typed_builder_unavailable",
+            ["source"] = "treasure_relic_readiness_probe",
+            ["availability"] = readiness.Availability,
+            ["state_type"] = "treasure",
+            ["message"] = readiness.Message,
+            ["current_screen_runtime_type"] = readiness.CurrentScreenRuntimeType,
+            ["relic_collection_visible"] = readiness.RelicCollectionVisible
         });
     }
 
@@ -439,7 +514,7 @@ public sealed class LegalActionBuilder
             actions.Add(action);
     }
 
-    private void AddCombatActions(ICollection<Dictionary<string, object?>> actions, object? player)
+    private void AddCombatActions(ICollection<Dictionary<string, object?>> actions, StateSnapshot snapshot, object? player)
     {
         CombatAvailability availability = _combatAvailabilityFactory();
         if (!availability.CanBuild)
@@ -476,7 +551,8 @@ public sealed class LegalActionBuilder
             return;
         }
 
-        var targetCandidates = CombatProjection.BuildTargetCandidates(runtimeCombatState, player);
+        IReadOnlyList<Dictionary<string, object?>> targetCandidates =
+            SnapshotCombatTargetCandidates(snapshot) ?? CombatProjection.BuildTargetCandidates(runtimeCombatState, player);
 
         int index = 0;
         foreach (object? card in ReflectionUtil.Enumerate(cards))
@@ -608,6 +684,55 @@ public sealed class LegalActionBuilder
 
     private static bool HasAny(object? value)
         => ReflectionUtil.Enumerate(value, maxItems: 1).Any();
+
+    private static IReadOnlyList<Dictionary<string, object?>>? SnapshotCombatTargetCandidates(StateSnapshot snapshot)
+    {
+        if (!TryGetDictionary(snapshot.RawSnapshot, "combat", out IReadOnlyDictionary<string, object?> combat)
+            || !combat.TryGetValue("target_candidates", out object? rawTargets)
+            || rawTargets == null)
+        {
+            return null;
+        }
+
+        return NormalizeTargetCandidateList(rawTargets);
+    }
+
+    private static IReadOnlyList<Dictionary<string, object?>>? NormalizeTargetCandidateList(object rawTargets)
+    {
+        if (rawTargets is IReadOnlyList<Dictionary<string, object?>> typedTargets)
+            return typedTargets;
+
+        if (rawTargets is not IEnumerable enumerable || rawTargets is string)
+            return null;
+
+        var targets = new List<Dictionary<string, object?>>();
+        foreach (object? item in enumerable)
+        {
+            if (item is Dictionary<string, object?> dictionary)
+            {
+                targets.Add(dictionary);
+            }
+            else if (item is IReadOnlyDictionary<string, object?> readOnlyDictionary)
+            {
+                targets.Add(new Dictionary<string, object?>(readOnlyDictionary, StringComparer.Ordinal));
+            }
+        }
+
+        return targets.Count == 0 ? null : targets;
+    }
+
+    private static bool TryGetDictionary(
+        IReadOnlyDictionary<string, object?> source,
+        string key,
+        out IReadOnlyDictionary<string, object?> value)
+    {
+        value = new Dictionary<string, object?>();
+        if (!source.TryGetValue(key, out object? raw) || raw is not IReadOnlyDictionary<string, object?> dictionary)
+            return false;
+
+        value = dictionary;
+        return true;
+    }
 
     private static void AddShopActions(ICollection<Dictionary<string, object?>> actions, object? runState, object? localPlayer)
     {
@@ -812,9 +937,65 @@ public sealed class LegalActionBuilder
             && stateType != "card_select"
             && stateType != "bundle_select"
             && stateType != "relic_select"
+            && stateType != "treasure"
             && stateType != "crystal_sphere"
             && stateType != "pack_select"
             && stateType != "special_select";
+
+    private static bool HasWingedBoots(object? localPlayer)
+    {
+        foreach (object? relic in ReflectionUtil.Enumerate(ReflectionUtil.GetMemberValue(localPlayer, "Relics")))
+        {
+            string? relicId = GetEntityId(relic);
+            if (string.Equals(relicId, "WINGED_BOOTS", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(relicId, "RELIC.WINGED_BOOTS", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(relicId, "WingedBoots", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<object?> EnumerateAllMapPoints(object? map)
+    {
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<object?>();
+
+        foreach (object? root in ReflectionUtil.Enumerate(ReflectionUtil.GetMemberValue(map, "startMapPoints", "StartMapPoints")))
+            queue.Enqueue(root);
+
+        object? startingPoint = ReflectionUtil.GetMemberValue(map, "StartingMapPoint");
+        if (startingPoint != null)
+            queue.Enqueue(startingPoint);
+
+        while (queue.Count > 0)
+        {
+            object? point = queue.Dequeue();
+            if (point == null || !seen.Add(point))
+                continue;
+
+            yield return point;
+
+            foreach (object? child in ReflectionUtil.Enumerate(ReflectionUtil.GetMemberValue(point, "Children")))
+                queue.Enqueue(child);
+        }
+    }
+
+    private static int? MapPointCoordValue(object? mapPoint, string key)
+        => MapCoordValue(ReflectionUtil.GetMemberValue(mapPoint, "coord", "Coord"), key);
+
+    private static int? MapCoordValue(object? coord, string key)
+    {
+        object? value = ReflectionUtil.GetMemberValue(coord, key, key.ToUpperInvariant());
+        return value switch
+        {
+            int intValue => intValue,
+            long longValue => checked((int)longValue),
+            _ => int.TryParse(value?.ToString(), out int parsed) ? parsed : null
+        };
+    }
 
     private static void AddSurfaceSpecificUnavailableActions(ICollection<Dictionary<string, object?>> actions, string stateType)
     {

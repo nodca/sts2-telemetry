@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
@@ -14,13 +15,15 @@ namespace Sts2Telemetry;
 public static class Sts2TelemetryMod
 {
     public const string ModId = "com.wcn.sts2.telemetry";
-    public const string Version = "0.1.4";
+    public const string Version = "0.1.17";
     private const int RtldNow = 2;
     private const int RtldGlobal = 0x100;
     private const int DecisionContextMaxSettleFrames = 3;
+    private const int DecisionContextMaxActionExecutorDeferrals = 2;
     private static readonly string[] RewardContextStateTypes = { "rewards" };
     private static readonly string[] CardRewardContextStateTypes = { "card_reward" };
     private static readonly string[] EventContextStateTypes = { "event" };
+    private static readonly string[] TreasureContextStateTypes = { "treasure" };
     private static readonly string[] ShopContextStateTypes = { "shop" };
     private static readonly string[] RelicSelectContextStateTypes = { "relic_select" };
     private static readonly string[] BundleSelectContextStateTypes = { "bundle_select" };
@@ -30,6 +33,7 @@ public static class Sts2TelemetryMod
     private static bool _initialized;
     private static bool _actionExecutorSubscribed;
     private static object? _actionExecutor;
+    private static int _actionExecutorInFlightCount;
     private static EventInfo? _playerChoiceReceivedEvent;
     private static Delegate? _playerChoiceReceivedHandler;
     private static object? _playerChoiceSynchronizer;
@@ -188,6 +192,11 @@ public static class Sts2TelemetryMod
             if (IsCardRewardSelectionSignal(source))
                 Recorder.EnsureCardRewardDecisionContextForSelectionSignal(source);
             Recorder.RecordPatchedUiSignal(source, instance, args);
+            if (IsEventOptionSelectionSignal(source))
+            {
+                Recorder.ClearDecisionContextForSurface("event");
+                ScheduleEventDecisionContextRefresh(source, attempt: 1);
+            }
         });
 
     internal static void OnRewardsGeneratedFromPatch(string source, object? rewardsSet, object? rewards)
@@ -557,6 +566,25 @@ public static class Sts2TelemetryMod
         int attempt,
         Action<bool, int>? afterAttempt = null,
         bool requireUsableLegalActions = false)
+        => ScheduleDecisionContext(
+            triggerSource,
+            contextSource,
+            callbackSourcePrefix,
+            allowedStateTypes,
+            attempt,
+            afterAttempt,
+            requireUsableLegalActions,
+            actionExecutorDeferrals: 0);
+
+    private static void ScheduleDecisionContext(
+        string triggerSource,
+        string contextSource,
+        string callbackSourcePrefix,
+        IReadOnlyCollection<string> allowedStateTypes,
+        int attempt,
+        Action<bool, int>? afterAttempt,
+        bool requireUsableLegalActions,
+        int actionExecutorDeferrals)
     {
         string callbackSource = attempt == 1
             ? callbackSourcePrefix
@@ -564,6 +592,23 @@ public static class Sts2TelemetryMod
 
         bool scheduled = TryScheduleNextFrame(callbackSource, () =>
         {
+            if (IsActionExecutorInFlight()
+                && actionExecutorDeferrals < DecisionContextMaxActionExecutorDeferrals)
+            {
+                TraceDiagnostic(
+                    $"{callbackSourcePrefix}:deferred_action_executor_in_flight:attempt={attempt}:defer={actionExecutorDeferrals + 1}");
+                ScheduleDecisionContext(
+                    triggerSource,
+                    contextSource,
+                    callbackSourcePrefix,
+                    allowedStateTypes,
+                    attempt,
+                    afterAttempt,
+                    requireUsableLegalActions,
+                    actionExecutorDeferrals + 1);
+                return;
+            }
+
             bool recorded = Recorder.RecordDecisionContextIfCurrentSurface(
                 contextSource: contextSource,
                 source: callbackSource,
@@ -575,7 +620,10 @@ public static class Sts2TelemetryMod
                     ["settled_snapshot_schedule"] = "next_frame",
                     ["settle_attempt"] = attempt,
                     ["max_settle_attempts"] = DecisionContextMaxSettleFrames,
-                    ["require_usable_legal_actions"] = requireUsableLegalActions
+                    ["require_usable_legal_actions"] = requireUsableLegalActions,
+                    ["action_executor_in_flight_deferred"] = actionExecutorDeferrals > 0,
+                    ["action_executor_in_flight_deferrals"] = actionExecutorDeferrals,
+                    ["action_executor_in_flight_gate"] = "defer_scheduled_context_until_action_boundary"
                 },
                 requireUsableLegalActions);
 
@@ -587,7 +635,8 @@ public static class Sts2TelemetryMod
                     allowedStateTypes,
                     attempt + 1,
                     afterAttempt,
-                    requireUsableLegalActions);
+                    requireUsableLegalActions,
+                    actionExecutorDeferrals: 0);
 
             afterAttempt?.Invoke(recorded, attempt);
         });
@@ -598,6 +647,14 @@ public static class Sts2TelemetryMod
             afterAttempt?.Invoke(false, DecisionContextMaxSettleFrames);
         }
     }
+
+    private static void ScheduleTreasureRelicPickSettledContext(string triggerSource, int attempt)
+        => ScheduleDecisionContext(
+            triggerSource,
+            contextSource: "action_executor.treasure_relic_pick.settled_context",
+            callbackSourcePrefix: "action_executor.treasure_relic_pick.treasure_context_settled",
+            allowedStateTypes: TreasureContextStateTypes,
+            attempt);
 
     private static void ClearChoiceCaches()
     {
@@ -635,10 +692,37 @@ public static class Sts2TelemetryMod
             ["stable_state_capture_continues_at"] = "lifecycle/room_entered_settled"
         };
 
+    internal static int ActionExecutorInFlightCountForTests()
+        => Math.Max(0, Volatile.Read(ref _actionExecutorInFlightCount));
+
+    internal static void ResetActionExecutorInFlightForTests()
+        => Volatile.Write(ref _actionExecutorInFlightCount, 0);
+
+    private static bool IsActionExecutorInFlight()
+        => Volatile.Read(ref _actionExecutorInFlightCount) > 0;
+
+    private static void MarkActionExecutorInFlight()
+        => Interlocked.Increment(ref _actionExecutorInFlightCount);
+
+    private static void MarkActionExecutorSettled()
+    {
+        if (Interlocked.Decrement(ref _actionExecutorInFlightCount) < 0)
+            Volatile.Write(ref _actionExecutorInFlightCount, 0);
+    }
+
     private static void OnBeforeActionExecuted(GameAction action)
         => GuardTelemetryCallback("action_executor.before_action_executed", () =>
         {
-            if (ActionExecutorCapturePolicy.IsSignalOnly(action))
+            MarkActionExecutorInFlight();
+            if (ActionExecutorCapturePolicy.IsTreasureRelicPickTransition(action))
+            {
+                Recorder.RecordActionExecutorSignal(
+                    action,
+                    "before_action_executed",
+                    ActionExecutorCapturePolicy.TreasureRelicPickTransitionSafety);
+                return;
+            }
+            else if (ActionExecutorCapturePolicy.IsSignalOnly(action))
             {
                 Recorder.RecordActionExecutorSignal(action, "before_action_executed");
                 return;
@@ -650,13 +734,29 @@ public static class Sts2TelemetryMod
     private static void OnAfterActionExecuted(GameAction action)
         => GuardTelemetryCallback("action_executor.after_action_executed", () =>
         {
-            if (ActionExecutorCapturePolicy.IsSignalOnly(action))
+            try
             {
-                Recorder.RecordActionExecutorSignal(action, "after_action_executed");
-                return;
+                if (ActionExecutorCapturePolicy.IsTreasureRelicPickTransition(action))
+                {
+                    Recorder.RecordActionExecutorSignal(
+                        action,
+                        "after_action_executed",
+                        ActionExecutorCapturePolicy.TreasureRelicPickTransitionSafety);
+                    ScheduleTreasureRelicPickSettledContext("action_executor.after_action_executed", attempt: 1);
+                }
+                else if (ActionExecutorCapturePolicy.IsSignalOnly(action))
+                {
+                    Recorder.RecordActionExecutorSignal(action, "after_action_executed");
+                }
+                else
+                {
+                    Recorder.CompleteActionExecutorDecision(action);
+                }
             }
-
-            Recorder.CompleteActionExecutorDecision(action);
+            finally
+            {
+                MarkActionExecutorSettled();
+            }
         });
 
     private static void OnRunSaveSaved()
@@ -685,6 +785,10 @@ public static class Sts2TelemetryMod
         => source.Contains("card_reward", StringComparison.OrdinalIgnoreCase)
             || source.Contains("card_selection.skip", StringComparison.OrdinalIgnoreCase)
             || source.Contains("CardRewardSelection", StringComparison.Ordinal);
+
+    private static bool IsEventOptionSelectionSignal(string source)
+        => string.Equals(source, "runtime.event.choose_local_option", StringComparison.Ordinal)
+            || source.Contains("EventSynchronizer.ChooseLocalOption", StringComparison.Ordinal);
 
     private static void GuardTelemetryCallback(string source, Action action)
     {

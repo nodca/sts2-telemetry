@@ -4,6 +4,8 @@ internal static class ActionExecutorCapturePolicy
 {
     public const string SignalOnlyNoStateSnapshotNoLegalActions =
         "signal_only_no_state_snapshot_no_legal_actions";
+    public const string TreasureRelicPickTransitionSafety =
+        "signal_only_treasure_relic_pick_transition_safety_no_state_snapshot_no_legal_actions";
 
     private static readonly HashSet<string> SignalOnlyActionTypes = new(StringComparer.Ordinal)
     {
@@ -18,8 +20,21 @@ internal static class ActionExecutorCapturePolicy
         "GenericHookGameAction",
         "VoteToMoveToNextActAction",
         "ReadyToBeginEnemyTurnAction",
-        "UndoEndPlayerTurnAction"
+        "UndoEndPlayerTurnAction",
+        "MegaCrit.Sts2.Core.GameActions.PickRelicAction",
+        "PickRelicAction"
     };
+
+    public static bool IsTreasureRelicPickTransition(object? action)
+        => action != null && IsTreasureRelicPickTransitionType(action.GetType());
+
+    public static bool IsTreasureRelicPickTransitionType(Type? actionType)
+        => actionType != null
+            && (IsTreasureRelicPickTransitionTypeName(actionType.FullName)
+                || IsTreasureRelicPickTransitionTypeName(actionType.Name));
+
+    public static bool IsTreasureRelicPickTransitionTypeName(string? actionTypeName)
+        => string.Equals(SimpleTypeName(actionTypeName ?? ""), "PickRelicAction", StringComparison.Ordinal);
 
     public static bool IsSignalOnly(object? action)
         => action != null && IsSignalOnlyType(action.GetType());
